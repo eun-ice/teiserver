@@ -3,7 +3,8 @@ defmodule Teiserver.Moderation.BannedPhraseTest do
   alias Teiserver.Moderation.BannedPhrase
   alias Teiserver.Moderation.LoadBannedPhrasesTask
 
-  use Teiserver.DataCase, async: true
+  # Banned phrase writes replace a global cache shared by all SQL sandboxes.
+  use Teiserver.DataCase, async: false
 
   import Teiserver.ModerationFixtures
 

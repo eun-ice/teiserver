@@ -2,7 +2,8 @@ defmodule TeiserverWeb.Moderation.BannedPhraseLive.ListTest do
   alias Teiserver.Helpers.GeneralTestLib
   alias Teiserver.ModerationFixtures
 
-  use TeiserverWeb.ConnCase, async: true
+  # Banned phrase writes replace a global cache shared by all SQL sandboxes.
+  use TeiserverWeb.ConnCase, async: false
 
   @create_attrs %{phrase: "some phrase", score_threshold: 123, type: "raw", use_cases: ["chat"]}
   @update_attrs %{

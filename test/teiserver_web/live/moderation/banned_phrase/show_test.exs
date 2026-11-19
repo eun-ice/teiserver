@@ -2,7 +2,8 @@ defmodule TeiserverWeb.Moderation.BannedPhraseLive.ShowTest do
   alias Teiserver.Helpers.GeneralTestLib
   alias Teiserver.ModerationFixtures
 
-  use TeiserverWeb.ConnCase, async: true
+  # Banned phrase writes replace a global cache shared by all SQL sandboxes.
+  use TeiserverWeb.ConnCase, async: false
 
   describe "access control" do
     test "cannot access show page without authenticating" do
