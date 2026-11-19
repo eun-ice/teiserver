@@ -85,10 +85,17 @@ defmodule Teiserver.SpringAuthTest do
 
     # And now we try for a bad mystatus command
     _send_raw(socket, "MYSTATUS\n")
-    reply = _recv_raw(socket)
+    assert _recv_raw(socket) == "s.system.disconnect Terminate\n"
+    assert _recv_raw(socket) == :closed
+  end
 
-    assert reply ==
-             "SERVERMSG No incomming match for MYSTATUS with data '\"\"'. Userid #{user.id}\n"
+  test "invalid MYSTATUS disconnects without crashing", context do
+    for status <- ["511", "abc127", "127abc", "-1"] do
+      %{socket: socket} = auth_setup(context)
+      _send_raw(socket, "MYSTATUS #{status}\n")
+      assert _recv_raw(socket) == "s.system.disconnect Terminate\n"
+      assert _recv_raw(socket) == :closed
+    end
   end
 
   test "IGNORELIST, IGNORE, UNIGNORE, SAYPRIVATE", %{socket: socket1, user: user} = context do

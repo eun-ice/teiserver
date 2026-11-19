@@ -35,6 +35,30 @@ defmodule Teiserver.SpringBattleHostTest do
     assert reply == :timeout
   end
 
+  test "invalid battle status disconnects without crashing", context do
+    for command <- [
+          "MYBATTLESTATUS abc 0",
+          "MYBATTLESTATUS 4294967295 0",
+          "MYBATTLESTATUS 4294967296 0",
+          "ADDBOT Bot 4294967295 0 NullAI",
+          "UPDATEBOT Bot 4294967295 0"
+        ] do
+      %{socket: socket, user: user} = auth_setup(context)
+      Auth.add_roles(user.id, ["Bot"])
+
+      _send_raw(
+        socket,
+        "OPENBATTLE 0 0 empty 322 16 gameHash 0 mapHash engineName\tengineVersion\tlobby_host_test\tgameTitle\tgameName\n"
+      )
+
+      assert _recv_until(socket) =~ "BATTLEOPENED "
+
+      _send_raw(socket, command <> "\n")
+      assert _recv_raw(socket) == "s.system.disconnect Terminate\n"
+      assert _recv_raw(socket) == :closed
+    end
+  end
+
   # https://github.com/beyond-all-reason/teiserver/actions/runs/31087215808/job/92569417868
   @tag :needs_attention
   test "battle with password", %{socket: socket, user: user} do

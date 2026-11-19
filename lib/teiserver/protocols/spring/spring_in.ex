@@ -32,6 +32,7 @@ defmodule Teiserver.Protocols.SpringIn do
   alias Teiserver.Room
   alias Teiserver.SpringTcpServer
   require Logger
+  import Bitwise, only: [band: 2]
   import Teiserver.Helper.NumberHelper, only: [int_parse: 1]
   import Teiserver.Helper.DateHelper, only: [date_to_str: 2]
   import Teiserver.Protocols.SpringOut, only: [reply: 4]
@@ -246,34 +247,34 @@ defmodule Teiserver.Protocols.SpringIn do
     reply(:servermsg, "You need to login before you can set your status", msg_id, state)
   end
 
-  defp do_handle("MYSTATUS", data, msg_id, state) do
+  defp do_handle("MYSTATUS", data, _msg_id, state) do
     {_is_flooding, state} = status_flood_protect?(state)
 
     # case status_flood_protect?(state) do
     #   {true, state} ->
     #     engage_flood_protection(state)
     #   {false, state} ->
-    case Regex.run(~r/(\d+)/, data) do
-      [_full_match, new_value] ->
-        new_status =
-          Spring.parse_client_status(new_value)
-          |> Map.take([:in_game, :away])
+    with [_full_match, new_value] <- Regex.run(~r/^(\d+)$/, data),
+         true <- valid_status?(new_value, 127) do
+      new_status =
+        Spring.parse_client_status(new_value)
+        |> Map.take([:in_game, :away])
 
-        case Client.get_client_by_id(state.userid) do
-          nil ->
-            :ok
+      case Client.get_client_by_id(state.userid) do
+        nil ->
+          :ok
 
-          client ->
-            # This just accepts it and updates the client
-            new_client = Map.merge(client, new_status)
+        client ->
+          # This just accepts it and updates the client
+          new_client = Map.merge(client, new_status)
 
-            if client.in_game != new_client.in_game or client.away != new_client.away do
-              Client.update(new_client, :client_updated_status)
-            end
-        end
-
-      nil ->
-        _no_match(state, "MYSTATUS", msg_id, data)
+          if client.in_game != new_client.in_game or client.away != new_client.away do
+            Client.update(new_client, :client_updated_status)
+          end
+      end
+    else
+      _ ->
+        reject_invalid_status(state, "MYSTATUS", data)
     end
 
     # end
@@ -1177,50 +1178,52 @@ defmodule Teiserver.Protocols.SpringIn do
     state
   end
 
-  defp do_handle("ADDBOT", data, msg_id, state) do
-    case Regex.run(~r/(\S+) (\d+) (\d+) (.+)/, data) do
-      [_full_match, name, battlestatus, team_colour, ai_dll] ->
-        if Lobby.allow?(state.userid, :add_bot, state.lobby_id) do
-          bot_data =
-            Map.merge(
-              %{
-                name: name,
-                owner_name: state.username,
-                owner_id: state.userid,
-                team_colour: team_colour |> to_string(),
-                ai_dll: ai_dll
-              },
-              Spring.parse_battle_status(battlestatus)
-            )
-            |> Lobby.new_bot()
+  defp do_handle("ADDBOT", data, _msg_id, state) do
+    with [_full_match, name, battlestatus, team_colour, ai_dll] <-
+           Regex.run(~r/^(\S+) (\d+) (\d+) (.+)$/, data),
+         true <- valid_battle_status?(battlestatus) do
+      if Lobby.allow?(state.userid, :add_bot, state.lobby_id) do
+        bot_data =
+          Map.merge(
+            %{
+              name: name,
+              owner_name: state.username,
+              owner_id: state.userid,
+              team_colour: team_colour |> to_string(),
+              ai_dll: ai_dll
+            },
+            Spring.parse_battle_status(battlestatus)
+          )
+          |> Lobby.new_bot()
 
-          Battle.add_bot_to_lobby(state.lobby_id, bot_data)
-        end
-
-      _no_match_result ->
-        _no_match(state, "ADDBOT", msg_id, data)
+        Battle.add_bot_to_lobby(state.lobby_id, bot_data)
+      end
+    else
+      _ ->
+        reject_invalid_status(state, "ADDBOT", data)
     end
 
     state
   end
 
-  defp do_handle("UPDATEBOT", data, msg_id, state) do
-    case Regex.run(~r/(\S+) (\S+) (\S+)/, data) do
-      [_full_match, botname, battlestatus, team_colour] ->
-        if Lobby.allow?(state.userid, {:update_bot, botname}, state.lobby_id) do
-          new_bot =
-            Map.merge(
-              %{
-                team_colour: team_colour |> to_string()
-              },
-              Spring.parse_battle_status(battlestatus)
-            )
+  defp do_handle("UPDATEBOT", data, _msg_id, state) do
+    with [_full_match, botname, battlestatus, team_colour] <-
+           Regex.run(~r/^(\S+) (\d+) (\S+)$/, data),
+         true <- valid_battle_status?(battlestatus) do
+      if Lobby.allow?(state.userid, {:update_bot, botname}, state.lobby_id) do
+        new_bot =
+          Map.merge(
+            %{
+              team_colour: team_colour |> to_string()
+            },
+            Spring.parse_battle_status(battlestatus)
+          )
 
-          Battle.update_bot(state.lobby_id, botname, new_bot)
-        end
-
-      _no_match_result ->
-        _no_match(state, "UPDATEBOT", msg_id, data)
+        Battle.update_bot(state.lobby_id, botname, new_bot)
+      end
+    else
+      _ ->
+        reject_invalid_status(state, "UPDATEBOT", data)
     end
 
     state
@@ -1383,37 +1386,37 @@ defmodule Teiserver.Protocols.SpringIn do
 
   defp do_handle("MYBATTLESTATUS", _data, _msg_id, %{lobby_id: nil} = state), do: state
 
-  defp do_handle("MYBATTLESTATUS", data, msg_id, state) do
-    case Regex.run(~r/(\S+) (.+)/, data) do
-      [_full_match, battlestatus, team_colour] ->
-        updates =
-          Spring.parse_battle_status(battlestatus)
-          |> Map.take([:ready, :team_number, :player, :sync, :side])
+  defp do_handle("MYBATTLESTATUS", data, _msg_id, state) do
+    with [_full_match, battlestatus, team_colour] <- Regex.run(~r/^(\d+) (.+)$/, data),
+         true <- valid_battle_status?(battlestatus) do
+      updates =
+        Spring.parse_battle_status(battlestatus)
+        |> Map.take([:ready, :team_number, :player, :sync, :side])
 
-        existing = Client.get_client_by_id(state.userid)
+      existing = Client.get_client_by_id(state.userid)
 
-        new_client =
-          (existing || %{})
-          |> Map.merge(updates)
-          |> Map.put(:team_colour, team_colour |> to_string())
+      new_client =
+        (existing || %{})
+        |> Map.merge(updates)
+        |> Map.put(:team_colour, team_colour |> to_string())
 
-        # This one needs a bit more nuance, for now we'll wrap it in this
-        # later it's possible we don't want players updating their status
-        if Lobby.allow?(state.userid, :mybattlestatus, state.lobby_id) do
-          case Coordinator.attempt_battlestatus_update(new_client, state.lobby_id) do
-            {true, allowed_client} ->
-              Client.update(allowed_client, :client_updated_battlestatus)
+      # This one needs a bit more nuance, for now we'll wrap it in this
+      # later it's possible we don't want players updating their status
+      if Lobby.allow?(state.userid, :mybattlestatus, state.lobby_id) do
+        case Coordinator.attempt_battlestatus_update(new_client, state.lobby_id) do
+          {true, allowed_client} ->
+            Client.update(allowed_client, :client_updated_battlestatus)
 
-            {false, _reason} ->
-              Client.update(existing, :client_updated_battlestatus)
+          {false, _reason} ->
+            Client.update(existing, :client_updated_battlestatus)
 
-            nil ->
-              :ok
-          end
+          nil ->
+            :ok
         end
-
-      _no_match_result ->
-        _no_match(state, "MYBATTLESTATUS", msg_id, data)
+      end
+    else
+      _ ->
+        reject_invalid_status(state, "MYBATTLESTATUS", data)
     end
 
     state
@@ -1464,6 +1467,24 @@ defmodule Teiserver.Protocols.SpringIn do
     Logger.info(msg)
     reply(:servermsg, msg, msg_id, state)
     %{state | last_message_invalid: true}
+  end
+
+  defp valid_status?(status, max_value) do
+    case Integer.parse(status) do
+      {value, ""} when value >= 0 and value <= max_value -> true
+      _ -> false
+    end
+  end
+
+  defp valid_battle_status?(status) do
+    valid_status?(status, 4_294_967_295) and
+      band(String.to_integer(status), 0xC00000) != 0xC00000
+  end
+
+  defp reject_invalid_status(state, command, data) do
+    Logger.info("Disconnecting user #{state.userid} for invalid #{command}: #{inspect(data)}")
+    send(self(), :terminate)
+    state
   end
 
   @spec deny(map(), String.t()) :: map()
